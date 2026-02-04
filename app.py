@@ -7,17 +7,17 @@ import re
 # --- PAGE SETUP ---
 st.set_page_config(page_title="AI Study Planner", page_icon="📚", layout="wide")
 
-# This file stores your progress
+# This file stores your progress locally on the server
 DATA_FILE = "study_tasks.json"
 
 @st.cache_resource
 def load_ai():
-    # 'summarization' is the recognized task for Flan-T5 to generate text roadmaps
-    return pipeline("summarization", model="google/flan-t5-small")
+    # Changed to 'text2text-generation' to fix the KeyError
+    return pipeline("text2text-generation", model="google/flan-t5-small")
 
 ai_model = load_ai()
 
-# --- HELPER FUNCTIONS ---
+# --- DATA PERSISTENCE ---
 def load_data():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r") as f:
@@ -33,24 +33,28 @@ def save_data(data):
 
 user_data = load_data()
 
-# --- SIDEBAR: GOAL SETTING ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("🎯 Learning Goal")
     goal_input = st.text_input("What are you learning?", value=user_data["goal"], placeholder="e.g. Python Basics")
     duration = st.number_input("Duration (Days)", min_value=1, max_value=30, value=user_data.get("days", 7))
     
     if st.button("🚀 Generate Plan"):
-        # The 'summarize:' prefix helps the T5 model understand the instruction
-        prompt = f"summarize: Create a {duration}-day study schedule for {goal_input}. List tasks as Day 1: [task], Day 2: [task]."
+        # Explicit instruction for the T5 model
+        prompt = f"generate a study plan: {goal_input} for {duration} days. List Day 1, Day 2, etc."
         with st.spinner("AI is crafting your roadmap..."):
-            result = ai_model(prompt, max_new_tokens=150)[0]["summary_text"]
+            # Using the text2text generation pipeline
+            result = ai_model(prompt, max_new_tokens=150)[0]["generated_text"]
             
-            # Simple logic to turn text into a checklist
-            sentences = result.split('.')
+            # Simple logic to turn generated text into a checklist
+            sentences = re.split(r'Day \d+:|Day \d+ -', result)
             tasks = []
-            for i, s in enumerate(sentences[:duration]):
-                if len(s.strip()) > 5:
-                    tasks.append({"day": i + 1, "task": s.strip(), "done": False})
+            day_count = 1
+            for s in sentences:
+                clean_s = s.strip()
+                if len(clean_s) > 3 and day_count <= duration:
+                    tasks.append({"day": day_count, "task": clean_s, "done": False})
+                    day_count += 1
             
             user_data = {"goal": goal_input, "days": duration, "tasks": tasks, "weekly_plan": [result]}
             save_data(user_data)
@@ -65,12 +69,11 @@ if user_data["tasks"]:
     with col1:
         st.subheader("✅ Daily Roadmap")
         for i, t in enumerate(user_data["tasks"]):
-            # Checkbox updates the 'done' status in our data list
-            user_data["tasks"][i]["done"] = st.checkbox(f"{t['task']}", value=t["done"], key=f"t_{i}")
+            user_data["tasks"][i]["done"] = st.checkbox(f"Day {t['day']}: {t['task']}", value=t["done"], key=f"t_{i}")
         
         if st.button("💾 Save Progress"):
             save_data(user_data)
-            st.success("Progress saved successfully!")
+            st.success("Progress saved!")
 
     with col2:
         st.subheader("📊 Statistics")
